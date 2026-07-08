@@ -24,6 +24,7 @@ def debug_log(msg):
     except:
         pass
 
+# ---------- دیتابیس ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -82,56 +83,64 @@ def get_all_users():
     conn.close()
     return [dict(row) for row in rows]
 
+# ---------- ربات ----------
 ptb_app = Application.builder().token(BOT_TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    debug_log("🚀 تابع start فراخوانی شد")
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    username = user.username if user.username else "بدون یوزرنیم"
-    full_name = user.full_name
+    try:
+        debug_log("🚀 تابع start فراخوانی شد")
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        username = user.username if user.username else "بدون یوزرنیم"
+        full_name = user.full_name
 
-    success = add_user(chat_id, username, full_name)
-    if not success:
-        await update.message.reply_text("⚠️ خطایی در ثبت اطلاعات رخ داد. لطفاً مجدد تلاش کنید.")
-    else:
-        message_text = (
-            "با سلام و احترام\n\n"
-            "با توجه به استقبال گسترده و حجم بالای درخواست‌ها، در حال حاضر با ازدحام موقت سامانه مواجه هستیم. "
-            "از این‌رو ظرفیت پاسخ‌گویی آنی محدود شده است.\n\n"
-            "خواهشمندیم با شکیبایی همراه باشید؛ به تمامی همراهان گرامی به‌ترتیب اولویت رسیدگی خواهد شد. "
-            "لطفاً چند ساعت دیگر مجدداً پیام دهید.\n\n"
-            "چنانچه مایلید به‌محض در دسترس قرار گرفتن اکانت‌ها به شما اطلاع‌رسانی شود، دکمهٔ زیر را ارسال فرمایید:"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔔 خبرم کن", callback_data="notify_me")]
-        ])
-        await update.message.reply_text(message_text, reply_markup=keyboard)
-
-    if OWNER_CHAT_ID:
-        try:
-            await context.bot.send_message(
-                chat_id=int(OWNER_CHAT_ID),
-                text=f"🆕 کاربر جدید:\nنام: {full_name}\nیوزرنیم: @{username}\nآیدی: {chat_id}"
+        success = add_user(chat_id, username, full_name)
+        if not success:
+            await update.message.reply_text("⚠️ خطایی در ثبت اطلاعات رخ داد. لطفاً مجدد تلاش کنید.")
+        else:
+            message_text = (
+                "با سلام و احترام\n\n"
+                "با توجه به استقبال گسترده و حجم بالای درخواست‌ها، در حال حاضر با ازدحام موقت سامانه مواجه هستیم. "
+                "از این‌رو ظرفیت پاسخ‌گویی آنی محدود شده است.\n\n"
+                "خواهشمندیم با شکیبایی همراه باشید؛ به تمامی همراهان گرامی به‌ترتیب اولویت رسیدگی خواهد شد. "
+                "لطفاً چند ساعت دیگر مجدداً پیام دهید.\n\n"
+                "چنانچه مایلید به‌محض در دسترس قرار گرفتن اکانت‌ها به شما اطلاع‌رسانی شود، دکمهٔ زیر را ارسال فرمایید:"
             )
-        except Exception as e:
-            debug_log(f"❌ خطا در ارسال به مالک: {e}")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔔 خبرم کن", callback_data="notify_me")]
+            ])
+            await update.message.reply_text(message_text, reply_markup=keyboard)
+
+        if OWNER_CHAT_ID:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(OWNER_CHAT_ID),
+                    text=f"🆕 کاربر جدید:\nنام: {full_name}\nیوزرنیم: @{username}\nآیدی: {chat_id}"
+                )
+            except Exception as e:
+                debug_log(f"❌ خطا در ارسال به مالک: {e}")
+    except Exception as e:
+        debug_log(f"❌ خطای کلی در start: {e}")
 
 async def notify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "notify_me":
-        user = query.from_user
-        chat_id = query.message.chat.id
-        username = user.username if user.username else "بدون یوزرنیم"
-        add_to_notify(chat_id, username)
-        await query.edit_message_text(
-            text="✅ ثبت شد!\nبه‌محض در دسترس قرار گرفتن اکانت‌ها، به شما اطلاع‌رسانی خواهد شد.",
-        )
+    try:
+        query = update.callback_query
+        await query.answer()
+        if query.data == "notify_me":
+            user = query.from_user
+            chat_id = query.message.chat.id
+            username = user.username if user.username else "بدون یوزرنیم"
+            add_to_notify(chat_id, username)
+            await query.edit_message_text(
+                text="✅ ثبت شد!\nبه‌محض در دسترس قرار گرفتن اکانت‌ها، به شما اطلاع‌رسانی خواهد شد.",
+            )
+    except Exception as e:
+        debug_log(f"❌ خطا در notify_callback: {e}")
 
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(CallbackQueryHandler(notify_callback))
 
+# ---------- Flask ----------
 flask_app = Flask(__name__)
 
 HTML_TEMPLATE = '''
@@ -263,6 +272,7 @@ def webhook():
     ptb_app.process_update(update)
     return "OK"
 
+# ---------- اجرا ----------
 if __name__ == "__main__":
     debug_log("===== شروع برنامه =====")
     init_db()
@@ -273,9 +283,14 @@ if __name__ == "__main__":
         webhook_url = f"{external_url}/webhook"
         import asyncio
         bot = Bot(token=BOT_TOKEN)
-        asyncio.run(bot.delete_webhook())
-        asyncio.run(bot.set_webhook(url=webhook_url))
-        debug_log(f"✅ Webhook تنظیم شد: {webhook_url}")
+        try:
+            asyncio.run(bot.delete_webhook())
+            asyncio.run(bot.set_webhook(url=webhook_url))
+            debug_log(f"✅ Webhook تنظیم شد: {webhook_url}")
+        except Exception as e:
+            debug_log(f"⚠️ خطا در تنظیم خودکار Webhook: {e}")
+            debug_log("لطفاً Webhook را به‌صورت دستی تنظیم کنید:")
+            debug_log(f"آدرس: https://api.telegram.org/bot<TOKEN>/setWebhook?url={webhook_url}")
     else:
         debug_log("⚠️ RENDER_EXTERNAL_URL پیدا نشد. Webhook را دستی تنظیم کنید.")
 
