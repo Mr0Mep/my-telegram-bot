@@ -1,12 +1,11 @@
 import os
 import sys
 import sqlite3
-import asyncio
 import threading
 import traceback
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string
-from telegram import Update, Bot, InlineKeyboardMarkup, InlineKeyboardButton
+from flask import Flask, jsonify, render_template_string
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 sys.stdout = sys.stderr
@@ -262,53 +261,21 @@ def dashboard():
 def api_users():
     return jsonify(get_all_users())
 
-@flask_app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), ptb_app.bot)
-    ptb_app.update_queue.put_nowait(update)
-    return "OK"
+# ---------- اجرای Flask در ترد جداگانه ----------
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
 
-# ---------- ترد ربات ----------
-def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(start_bot())
-    except Exception as e:
-        debug_log(f"❌ Bot thread crashed: {e}")
-        traceback.print_exc()
-
-async def start_bot():
-    debug_log("🚀 راه‌اندازی ربات...")
-    await ptb_app.initialize()
-    await ptb_app.start()
-    debug_log("✅ ربات start شد و آمادهٔ دریافت آپدیت‌ها")
-
-    # تنظیم Webhook (اگر متغیر RENDER_EXTERNAL_URL وجود داشت)
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        webhook_url = f"{external_url}/webhook"
-        bot = Bot(token=BOT_TOKEN)
-        await bot.delete_webhook()
-        await bot.set_webhook(url=webhook_url)
-        debug_log(f"✅ Webhook تنظیم شد: {webhook_url}")
-    else:
-        debug_log("⚠️ RENDER_EXTERNAL_URL پیدا نشد. Webhook را دستی تنظیم کنید.")
-
-    # زنده نگه داشتن حلقه
-    while True:
-        await asyncio.sleep(3600)
-
-# ---------- اجرا ----------
 if __name__ == "__main__":
     debug_log("===== شروع برنامه =====")
     init_db()
     debug_log("✅ دیتابیس آماده شد.")
 
-    # ربات را در یک ترد جداگانه راه‌اندازی کن
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    debug_log("✅ ترد ربات شروع شد.")
+    # شروع Flask در یک ترد جدا
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    debug_log("✅ ترد Flask شروع شد.")
 
-    # Flask در ترد اصلی
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
+    # حذف Webhook قبلی (اختیاری) و شروع Polling
+    # run_polling خودش event loop را مدیریت می‌کند و webhook را پاک می‌کند
+    debug_log("شروع Polling... منتظر آپدیت‌ها از تلگرام")
+    ptb_app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
