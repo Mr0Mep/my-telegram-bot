@@ -1,6 +1,8 @@
 import os
 import sys
 import sqlite3
+import asyncio
+import threading
 import traceback
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
@@ -87,55 +89,49 @@ def get_all_users():
 ptb_app = Application.builder().token(BOT_TOKEN).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        debug_log("🚀 تابع start فراخوانی شد")
-        user = update.effective_user
-        chat_id = update.effective_chat.id
-        username = user.username if user.username else "بدون یوزرنیم"
-        full_name = user.full_name
+    debug_log("🚀 تابع start فراخوانی شد")
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    username = user.username if user.username else "بدون یوزرنیم"
+    full_name = user.full_name
 
-        success = add_user(chat_id, username, full_name)
-        if not success:
-            await update.message.reply_text("⚠️ خطایی در ثبت اطلاعات رخ داد. لطفاً مجدد تلاش کنید.")
-        else:
-            message_text = (
-                "با سلام و احترام\n\n"
-                "با توجه به استقبال گسترده و حجم بالای درخواست‌ها، در حال حاضر با ازدحام موقت سامانه مواجه هستیم. "
-                "از این‌رو ظرفیت پاسخ‌گویی آنی محدود شده است.\n\n"
-                "خواهشمندیم با شکیبایی همراه باشید؛ به تمامی همراهان گرامی به‌ترتیب اولویت رسیدگی خواهد شد. "
-                "لطفاً چند ساعت دیگر مجدداً پیام دهید.\n\n"
-                "چنانچه مایلید به‌محض در دسترس قرار گرفتن اکانت‌ها به شما اطلاع‌رسانی شود، دکمهٔ زیر را ارسال فرمایید:"
+    success = add_user(chat_id, username, full_name)
+    if not success:
+        await update.message.reply_text("⚠️ خطایی در ثبت اطلاعات رخ داد. لطفاً مجدد تلاش کنید.")
+    else:
+        message_text = (
+            "با سلام و احترام\n\n"
+            "با توجه به استقبال گسترده و حجم بالای درخواست‌ها، در حال حاضر با ازدحام موقت سامانه مواجه هستیم. "
+            "از این‌رو ظرفیت پاسخ‌گویی آنی محدود شده است.\n\n"
+            "خواهشمندیم با شکیبایی همراه باشید؛ به تمامی همراهان گرامی به‌ترتیب اولویت رسیدگی خواهد شد. "
+            "لطفاً چند ساعت دیگر مجدداً پیام دهید.\n\n"
+            "چنانچه مایلید به‌محض در دسترس قرار گرفتن اکانت‌ها به شما اطلاع‌رسانی شود، دکمهٔ زیر را ارسال فرمایید:"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔔 خبرم کن", callback_data="notify_me")]
+        ])
+        await update.message.reply_text(message_text, reply_markup=keyboard)
+
+    if OWNER_CHAT_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=int(OWNER_CHAT_ID),
+                text=f"🆕 کاربر جدید:\nنام: {full_name}\nیوزرنیم: @{username}\nآیدی: {chat_id}"
             )
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔔 خبرم کن", callback_data="notify_me")]
-            ])
-            await update.message.reply_text(message_text, reply_markup=keyboard)
-
-        if OWNER_CHAT_ID:
-            try:
-                await context.bot.send_message(
-                    chat_id=int(OWNER_CHAT_ID),
-                    text=f"🆕 کاربر جدید:\nنام: {full_name}\nیوزرنیم: @{username}\nآیدی: {chat_id}"
-                )
-            except Exception as e:
-                debug_log(f"❌ خطا در ارسال به مالک: {e}")
-    except Exception as e:
-        debug_log(f"❌ خطای کلی در start: {e}")
+        except Exception as e:
+            debug_log(f"❌ خطا در ارسال به مالک: {e}")
 
 async def notify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        if query.data == "notify_me":
-            user = query.from_user
-            chat_id = query.message.chat.id
-            username = user.username if user.username else "بدون یوزرنیم"
-            add_to_notify(chat_id, username)
-            await query.edit_message_text(
-                text="✅ ثبت شد!\nبه‌محض در دسترس قرار گرفتن اکانت‌ها، به شما اطلاع‌رسانی خواهد شد.",
-            )
-    except Exception as e:
-        debug_log(f"❌ خطا در notify_callback: {e}")
+    query = update.callback_query
+    await query.answer()
+    if query.data == "notify_me":
+        user = query.from_user
+        chat_id = query.message.chat.id
+        username = user.username if user.username else "بدون یوزرنیم"
+        add_to_notify(chat_id, username)
+        await query.edit_message_text(
+            text="✅ ثبت شد!\nبه‌محض در دسترس قرار گرفتن اکانت‌ها، به شما اطلاع‌رسانی خواهد شد.",
+        )
 
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(CallbackQueryHandler(notify_callback))
@@ -269,8 +265,40 @@ def api_users():
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), ptb_app.bot)
-    ptb_app.process_update(update)
+    # تزریق آپدیت به صف ربات (که توسط ترد زیر پردازش می‌شود)
+    ptb_app.update_queue.put_nowait(update)
     return "OK"
+
+# ---------- اجرای ربات در یک Event Loop جداگانه ----------
+def run_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(start_bot())
+    except Exception as e:
+        debug_log(f"❌ Bot thread crashed: {e}")
+        traceback.print_exc()
+
+async def start_bot():
+    debug_log("🚀 راه‌اندازی ربات...")
+    await ptb_app.initialize()
+    await ptb_app.start()
+    debug_log("✅ ربات start شد. در حال پردازش آپدیت‌ها...")
+
+    # تنظیم Webhook (اگر متغیر محیطی موجود بود)
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        webhook_url = f"{external_url}/webhook"
+        bot = Bot(token=BOT_TOKEN)
+        await bot.delete_webhook()
+        await bot.set_webhook(url=webhook_url)
+        debug_log(f"✅ Webhook تنظیم شد: {webhook_url}")
+    else:
+        debug_log("⚠️ RENDER_EXTERNAL_URL پیدا نشد. Webhook را دستی تنظیم کنید.")
+
+    # زنده نگه داشتن رویداد
+    while True:
+        await asyncio.sleep(3600)
 
 # ---------- اجرا ----------
 if __name__ == "__main__":
@@ -278,20 +306,10 @@ if __name__ == "__main__":
     init_db()
     debug_log("✅ دیتابیس آماده شد.")
 
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        webhook_url = f"{external_url}/webhook"
-        import asyncio
-        bot = Bot(token=BOT_TOKEN)
-        try:
-            asyncio.run(bot.delete_webhook())
-            asyncio.run(bot.set_webhook(url=webhook_url))
-            debug_log(f"✅ Webhook تنظیم شد: {webhook_url}")
-        except Exception as e:
-            debug_log(f"⚠️ خطا در تنظیم خودکار Webhook: {e}")
-            debug_log("لطفاً Webhook را به‌صورت دستی تنظیم کنید:")
-            debug_log(f"آدرس: https://api.telegram.org/bot<TOKEN>/setWebhook?url={webhook_url}")
-    else:
-        debug_log("⚠️ RENDER_EXTERNAL_URL پیدا نشد. Webhook را دستی تنظیم کنید.")
+    # ربات را در یک ترد جداگانه راه‌اندازی کن
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    debug_log("✅ ترد ربات شروع شد.")
 
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 7860)), debug=False)
+    # Flask در ترد اصلی
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
