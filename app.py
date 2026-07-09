@@ -3,8 +3,10 @@ import sys
 import sqlite3
 import threading
 import traceback
+import csv
+import io
 from datetime import datetime
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, Response
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -132,8 +134,42 @@ async def notify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="✅ ثبت شد!\nبه‌محض در دسترس قرار گرفتن اکانت‌ها، به شما اطلاع‌رسانی خواهد شد.",
         )
 
+### ----- قابلیت ارسال همگانی (broadcast) -----
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # چک می‌کنیم فرستنده مالک باشد
+    if str(update.effective_chat.id) != OWNER_CHAT_ID:
+        await update.message.reply_text("⛔ شما اجازهٔ استفاده از این دستور را ندارید.")
+        return
+
+    # بررسی وجود پیام
+    if not context.args:
+        await update.message.reply_text("لطفاً متنی را بعد از /broadcast بنویسید.")
+        return
+
+    text = " ".join(context.args)
+    users = get_all_users()
+    success = 0
+    failed = 0
+
+    await update.message.reply_text(f"⏳ در حال ارسال پیام به {len(users)} کاربر...")
+
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u["chat_id"], text=text)
+            success += 1
+        except:
+            failed += 1
+
+    await update.message.reply_text(
+        f"✅ پیام همگانی ارسال شد.\n"
+        f"👥 دریافت‌کنندگان موفق: {success}\n"
+        f"❌ ناموفق (احتمالاً بلاک): {failed}"
+    )
+### --------------------------------------------
+
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(CallbackQueryHandler(notify_callback))
+ptb_app.add_handler(CommandHandler("broadcast", broadcast_command))   ### اضافه شد
 
 # ---------- Flask ----------
 flask_app = Flask(__name__)
@@ -261,7 +297,21 @@ def dashboard():
 def api_users():
     return jsonify(get_all_users())
 
-# ---------- اجرای Flask در ترد جداگانه ----------
+@flask_app.route("/download/csv")
+def download_csv():
+    users = get_all_users()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["chat_id", "username", "full_name", "created_at"])
+    for u in users:
+        writer.writerow([u["chat_id"], u["username"], u["full_name"], u["created_at"]])
+    output.seek(0)
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=users.csv"}
+    )
+
 def run_flask():
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
 
@@ -270,12 +320,9 @@ if __name__ == "__main__":
     init_db()
     debug_log("✅ دیتابیس آماده شد.")
 
-    # شروع Flask در یک ترد جدا
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     debug_log("✅ ترد Flask شروع شد.")
 
-    # حذف Webhook قبلی (اختیاری) و شروع Polling
-    # run_polling خودش event loop را مدیریت می‌کند و webhook را پاک می‌کند
     debug_log("شروع Polling... منتظر آپدیت‌ها از تلگرام")
     ptb_app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
